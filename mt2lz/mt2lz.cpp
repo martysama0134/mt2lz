@@ -478,14 +478,23 @@ int main(int argc, char * argv[])
 		}
 		fclose(InFile);
 
+		if (Size < 4)
+		{
+			printf("%s is too short to be a packed file.\n", argv[2]);
+			delete[] Buffer;
+			return 0;
+		}
+
 		unsigned long uncompressedSize = *(unsigned long *) Buffer;
 
 		unsigned char * uncompressedBuffer = new unsigned char[uncompressedSize];
 		memset(uncompressedBuffer, 0, uncompressedSize);
 
+		// the input length is the packed stream (the file minus its size header), not the unpacked size: a file that
+		// barely compresses has a stream longer than its unpacked size and was cut short
 		unsigned long finalSize = 0;
-		lzo_decompress(Buffer + 4, uncompressedSize, uncompressedBuffer, &finalSize);
-		if (finalSize == uncompressedSize)
+		const int result = lzo_decompress(Buffer + 4, Size - 4, uncompressedBuffer, &finalSize);
+		if (result == LZO_E_OK && finalSize == uncompressedSize)
 		{
 			FILE * OutFile = fopen(argv[3], "wb");
 			if (OutFile)
@@ -497,7 +506,7 @@ int main(int argc, char * argv[])
 		else
 		{
 			printf("There was an error when decompressing %s file.\n", argv[2]);
-			printf("%i %i\n", finalSize, uncompressedSize);
+			printf("unpacked %lu of %lu bytes (lzo %d)\n", finalSize, uncompressedSize, result);
 		}
 		delete[] uncompressedBuffer;
 		delete[] Buffer;
