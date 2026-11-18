@@ -10,11 +10,22 @@ Usable as a module too:
     stream = mt2lz.compress(data)
     status, data = mt2lz.decompress(stream, size)
 
-Standard library only, Python 3.8+.
+Standard library only, Python 3.8+. When python-lzo is installed (`pip install python-lzo`) it is used too:
+
+- unpack decodes with liblzo, which is much faster. liblzo accepts the same streams and gives the same bytes; a file
+  it rejects goes through the Python decoder, so errors are reported exactly as before.
+- `mt2lz.py --lzo[=1|9] pack <in> <out>` packs with liblzo LZO1X-1 (default) or LZO1X-999 (smaller, slower). The
+  result unpacks with this tool and with mt2lz.exe, but it is not byte for byte what mt2lz.exe packs: stock LZO
+  measures matches to the byte, this compressor in 4-byte steps.
 """
 
 import sys
 from array import array
+
+try:
+    import lzo as _lzo  # python-lzo, optional
+except ImportError:
+    _lzo = None
 
 __all__ = [
     "OK", "INPUT_OVERRUN", "EOF_NOT_FOUND", "INPUT_NOT_CONSUMED", "OUTPUT_OVERRUN", "LOOKBEHIND_OVERRUN",
@@ -403,14 +414,32 @@ def _write_output(path, *parts):
         pass
 
 
-def pack(in_path, out_path):
+def _liblzo_decompress(stream, size):
+    """liblzo's decoder: the data if it decodes `stream` to exactly `size` bytes, else None (the caller then runs
+    decompress() for the status to report)."""
+    # a zero byte in a stream adds at most 255 output bytes, so a bigger size cannot be valid; skipping it also keeps
+    # a corrupt header from making liblzo allocate gigabytes up front
+    if _lzo is None or size > (len(stream) + 1) * 256:
+        return None
+    try:
+        data = _lzo.decompress(bytes(stream), False, size)
+    except Exception:  # lzo.error on a corrupt stream, MemoryError
+        return None
+    return data if len(data) == size else None  # the size given is only a limit: a short result is no error
+
+
+def pack(in_path, out_path, lzo_level=None):
+    """Packs `in_path`. With `lzo_level` (1 or 9) the stream comes from liblzo instead of this compressor."""
+    if lzo_level is not None and _lzo is None:
+        raise RuntimeError("packing with liblzo needs python-lzo: pip install python-lzo")
     data = _read_input(in_path)
     if data is None:
         return 0
     if len(data) > 0xFFFFFFFF:
         _print("%s is too big to be packed.\n" % in_path)
         return 0
-    _write_output(out_path, len(data).to_bytes(_HEADER_SIZE, "little"), compress(data))
+    stream = compress(data) if lzo_level is None else _lzo.compress(data, lzo_level, False)
+    _write_output(out_path, len(data).to_bytes(_HEADER_SIZE, "little"), stream)
     return 0
 
 
@@ -423,7 +452,13 @@ def unpack(in_path, out_path):
         return 0
 
     size = int.from_bytes(packed[:_HEADER_SIZE], "little")
-    status, data = decompress(memoryview(packed)[_HEADER_SIZE:], size)
+    stream = memoryview(packed)[_HEADER_SIZE:]
+    data = _liblzo_decompress(stream, size)
+    if data is not None:
+        _write_output(out_path, data)
+        return 0
+
+    status, data = decompress(stream, size)
     if status != OK or len(data) != size:
         _print("There was an error when decompressing %s file.\n" % in_path)
         _print("unpacked %d of %d bytes (lzo %d)\n" % (len(data), size, status))
@@ -432,18 +467,28 @@ def unpack(in_path, out_path):
     return 0
 
 
+_LZO_OPTIONS = {"--lzo": 1, "--lzo=1": 1, "--lzo=9": 9}
+
+
 def main(argv=None):
     argv = sys.argv if argv is None else argv
     argv0 = argv[0] if argv else ""
+    lzo_level = None
+    if len(argv) > 1 and argv[1] in _LZO_OPTIONS:
+        lzo_level = _LZO_OPTIONS[argv[1]]  # only pack uses it: unpack takes liblzo whenever it is installed
+        argv = argv[:1] + argv[2:]
     if len(argv) != 4:
         return _usage(argv0)
 
     mode, in_path, out_path = argv[1:]
+    if mode == "pack" and lzo_level is not None and _lzo is None:
+        _print("--lzo needs python-lzo: pip install python-lzo\n")
+        return 1
     try:
         if mode == "unpack":
             return unpack(in_path, out_path)
         if mode == "pack":
-            return pack(in_path, out_path)
+            return pack(in_path, out_path, lzo_level)
     except MemoryError:
         _print("Memory error when make buffer for %s file.\n" % in_path)
         _wait_for_key()
