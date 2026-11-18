@@ -327,10 +327,11 @@ private:
 		return true;
 	}
 
-	// Counts too big for an instruction: zero bytes add 255 each, the first nonzero byte ends them.
-	bool read_count(std::size_t base, std::size_t & count) noexcept
+	// Counts too big for an instruction: zero bytes add 255 each, the first nonzero byte ends them. The sum wraps at
+	// 32 bits like the original's unsigned long, and is not checked here: the end marker reads a count it never uses.
+	bool read_count(std::uint32_t base, std::size_t & count) noexcept
 	{
-		count = base;
+		std::uint32_t sum = base;
 		for (;;)
 		{
 			std::uint8_t value = 0;
@@ -338,12 +339,10 @@ private:
 				return false;
 			if (value != 0)
 			{
-				count += value;
+				count = static_cast<std::uint32_t>(sum + value);
 				return true;
 			}
-			count += 255;
-			if (count > out_.size())
-				return fail(Status::OutputOverrun);
+			sum += 255;
 		}
 	}
 

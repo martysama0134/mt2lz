@@ -225,8 +225,9 @@ _AFTER_TRAILING_LITERALS = 1  # a match followed by 1-3 literals: a 2-byte match
 _AFTER_LITERAL_RUN = 2  # a run of 4+ literals: a 3-byte match
 
 
-def _read_count(src, ip, base, capacity):
-    """Counts too big for an instruction: zero bytes add 255 each, the first nonzero byte ends them."""
+def _read_count(src, ip, base):
+    """Counts too big for an instruction: zero bytes add 255 each, the first nonzero byte ends them. The sum wraps at
+    32 bits like the original's unsigned long, and is not checked here: the end marker reads a count it never uses."""
     end = len(src)
     count = base
     while True:
@@ -235,10 +236,8 @@ def _read_count(src, ip, base, capacity):
         value = src[ip]
         ip += 1
         if value:
-            return count + value, ip
+            return (count + value) & 0xFFFFFFFF, ip
         count += 255
-        if count > capacity:
-            raise _Stop(OUTPUT_OVERRUN)
 
 
 def decompress(src, capacity):
@@ -287,7 +286,7 @@ def decompress(src, capacity):
                 if context == _AFTER_MATCH:
                     count = instruction
                     if count == 0:
-                        count, ip = _read_count(src, ip, 15, capacity)
+                        count, ip = _read_count(src, ip, 15)
                     ip = copy_literals(ip, count + 3)
                     context = _AFTER_LITERAL_RUN
                     continue
@@ -309,7 +308,7 @@ def decompress(src, capacity):
             elif instruction >= 32:  # M3
                 length = instruction & 31
                 if length == 0:
-                    length, ip = _read_count(src, ip, 31, capacity)
+                    length, ip = _read_count(src, ip, 31)
                 if end - ip < 2:
                     raise _Stop(INPUT_OVERRUN)
                 distance = 1 + ((src[ip] | src[ip + 1] << 8) >> 2)
@@ -318,7 +317,7 @@ def decompress(src, capacity):
             else:  # M4, which also encodes the end of the stream
                 length = instruction & 7
                 if length == 0:
-                    length, ip = _read_count(src, ip, 7, capacity)
+                    length, ip = _read_count(src, ip, 7)
                 if end - ip < 2:
                     raise _Stop(INPUT_OVERRUN)
                 distance = ((instruction & 8) << 11) + ((src[ip] | src[ip + 1] << 8) >> 2)
