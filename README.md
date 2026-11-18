@@ -22,3 +22,5 @@ Open `mt2lz.sln` in Visual Studio 2022 or later (C++20, toolset v143) and build 
 - `mt2lz/lzo1x.hpp`, `mt2lz/lzo1x.cpp`: the codec. The compressor is not stock LZO1X-1 (its matches grow 4 bytes at a
   time), so it is kept as is to produce the same packed bytes.
 - `mt2lz/main.cpp`: the command line tool.
+- `python/mt2lz.py`: a pure Python port (standard library only, Python 3.8+) with the same output, usable as a script
+  (`python mt2lz.py pack <in> <out>`) or as a module (`compress(data)`, `decompress(stream, size)`).
